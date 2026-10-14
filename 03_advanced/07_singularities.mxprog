@@ -1,0 +1,442 @@
+/* ==============================================================
+   07 — Singularities, and passing through them
+   --------------------------------------------------------------
+   ROBOT     Meca500 only (R3 or R4)
+   TEACHES   What a singularity is, the three types, and the
+             rules for crossing one
+   NEEDS     Robot activated + homed, NO TOOL, generous clearance
+   WATCH     The joints, not the tool tip. The whole phenomenon
+             is visible in the joints and invisible at the TCP
+   TIME      ~90 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   Ϫ READ THIS BEFORE RUNNING
+
+   Crossing a singularity can make joints rotate FAST while the
+   tool tip barely moves. That is the defining symptom, and it is
+   the hazard: a slow-looking tool tip can mean a wrist snapping
+   through 180 degrees.
+
+   This file therefore caps joint speed with SetJointVelLimit
+   rather than trusting SetCartLinVel. A Cartesian velocity limit
+   does NOT protect you here — it limits the tip, and the tip is
+   the thing that is moving slowly.
+
+   Run it with the robot clear of everything, no tool fitted, and
+   watch it the first time before you change any numbers.
+   --------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------
+   WHAT A SINGULARITY IS
+
+   Not a maths problem. A physical blockage.
+
+   Put the robot at its zero position — all six joints at zero —
+   and try to move the tool sideways, parallel to the Y axis of
+   the base. You cannot. Not "the controller refuses"; the arm
+   physically cannot generate motion in that direction from that
+   posture. To move that way it must first rotate joints 4 and 6
+   a quarter turn in opposite directions.
+
+   That is a singularity: a posture where the end-effector loses
+   the ability to move in some direction even though no joint is
+   at its limit. It is a kind of workspace boundary.
+
+   Mathematically, it is where several joint-set solutions for a
+   pose collapse into one, or where there are infinitely many.
+   Which is the same thing said in a less useful way.
+
+   WHY THE MECA500 IS EASY TO REASON ABOUT HERE
+
+   The axes of the last three joints all intersect at one point —
+   the wrist centre. That makes all three singularity types
+   describable geometrically, so you can tell by eye whether you
+   are near one. On many other designs you cannot.
+
+   THE THREE TYPES
+
+   1. WRIST singularity — theta5 = 0.
+      Joints 4 and 6 become collinear, so they can rotate in
+      opposite directions at equal speed with the end-effector
+      completely stationary. The most common one by far; the
+      manual says plainly that you will run into it frequently.
+
+      Note what this means: THE ZERO POSITION IS A WRIST
+      SINGULARITY. Every example in this repo starts and ends at
+      one. You have been visiting singularities all along.
+
+   2. ELBOW singularity — the arm fully stretched, so the wrist
+      centre lies in the plane of the axes of joints 2 and 3.
+      On the Meca500 this is exactly
+
+          theta3 = -arctan(60/19) = -72.43 degrees
+
+      independent of the other joints. You meet it reaching for
+      poses too far from the base.
+
+   3. SHOULDER singularity — the wrist centre lies on the axis of
+      joint 1. You meet it working too close to that axis, i.e.
+      directly above the robot's own base. Rarest of the three
+      and much the most awkward.
+
+   These three correspond exactly to the conditions under which
+   the posture parameters cs, ce and cw become undefined. See
+   intermediate/04_posture_configuration.mxprog for those.
+   --------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------
+   THE RULES FOR CROSSING
+
+   This is the part worth memorising, because the behaviour
+   differs per command and per singularity type.
+
+     MoveJoints   Always fine. You name joint angles, so no
+                  inverse kinematics is solved and there is
+                  nothing to be singular. Joint moves can sail
+                  straight through any singularity.
+
+     MovePose     Fine. The manual is explicit: the robot can
+                  transition through, or begin or end at, singular
+                  postures without any issues.
+
+     MoveLin*     The interesting case. Since firmware 9.1 it can
+                  START AT or PASS THROUGH wrist and shoulder
+                  singularities, and can END AT any of the three.
+                  Crossing respects your posture configuration
+                  settings — which is what the demos below are
+                  about.
+
+   Two asymmetries worth noting:
+
+   - ELBOW singularities are not in the pass-through list. You
+     can end at one. Crossing one mid-path with MoveLin is a
+     different matter, and the manual does not promise it.
+
+   - SHOULDER singularities can only be crossed with
+     SetAutoConf(1). The robot will never stop at one to reorient
+     joints 1, 4 and 6 with the tool stationary, so a demanded
+     configuration cannot be honoured through one.
+
+   AND THE WARNING THAT MATTERS MOST
+
+   Passing EXACTLY through a singularity works. Passing NEARLY
+   through one is where applications go wrong. Shift the same
+   path by one micrometre and joints 4 and 6 — or 1, 4 and 6 —
+   rotate very fast while the tool speed collapses.
+
+   So the manual's guidance, and this file's: crossing exists to
+   make programming easier, and singularities should be avoided
+   in production. Passing through or near them means longer cycle
+   times. Use this file to understand the phenomenon so you can
+   design paths that stay away from it.
+   --------------------------------------------------------------- */
+
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode — so this
+   program starts from firmware defaults no matter what ran
+   before it. Reactivating brings the motors back.
+
+   This does NOT move the arm: a robot that was already homed
+   needs no re-homing. (With an MEGP 25* gripper fitted, the
+   gripper re-homes on reactivation. The robot still does not
+   move — but keep the fingers clear.)
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision and calibration config all
+   survive. Run common/cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+Home()
+ResetError()
+ResumeMotion()
+
+
+/* --- Safety settings for this file ---------------------------- */
+
+// The important one. Caps how fast any joint may turn, for EVERY
+// Move* command. This is what protects you when a wrist flips.
+SetJointVelLimit(10)
+
+SetJointVel(15)
+SetCartLinVel(30)
+SetBlending(0)          // see each arrival distinctly
+
+
+/* ============================================================
+   DEMO 1 — the blocked direction
+   ============================================================
+   Go to the zero position, which is a wrist singularity, and
+   feel the blockage described at the top of this file. */
+
+MoveJoints(0, 0, 0, 0, 0, 0)
+Delay(1)
+
+/* This MoveLin asks for 50 mm of pure Y from the singular
+   posture — the direction that is blocked at the instant it
+   starts. Watch the wrist: the motion is only possible because
+   joints 4 and 6 reorient first. Starting a linear move AT a
+   wrist singularity is explicitly supported, so this is accepted
+   rather than refused.
+
+   Worth doing by hand as well, if you have the robot in front of
+   you: stop here, jog in base-frame Y from the zero position in
+   the MecaPortal, and watch what joints 4 and 6 have to do to
+   deliver a sideways millimetre. */
+MoveLin(190, 50, 308.9, 0, 90, 0)
+Delay(1)
+
+MoveJoints(0, 0, 0, 0, 0, 0)
+Delay(1)
+
+
+/* ============================================================
+   DEMO 2 — crossing a wrist singularity, AutoConf
+   ============================================================
+   The robot passes through the all-zeros posture mid-path and
+   comes out the other side with its wrist configuration flipped.
+
+   With automatic posture selection on, the controller is free to
+   change cw from 1 to -1 as it crosses, and the move succeeds as
+   one continuous MoveLin. */
+
+SetAutoConf(1)
+SetAutoConfTurn(1)
+
+// Approach the start of the line.
+MovePose(190, -60, 308.9, 0, 90, 0)
+Delay(1)
+
+/* One straight line, right through the singular point at
+   y = 0. Watch joint 5 pass through zero, and watch joints 4
+   and 6 do the work of getting the wrist to the other side. */
+MoveLin(190, 60, 308.9, 0, 90, 0)
+Delay(1.5)
+
+
+/* ============================================================
+   DEMO 3 — the same move, refused
+   ============================================================
+   Now demand a specific posture instead of letting the robot
+   choose, and ask for exactly the same line.
+
+   The robot refuses. Crossing the singular point while holding
+   cw = 1 would require joint 4 to rotate 180 degrees at the
+   crossing, and joint 4's range is +/-170. It cannot, so it
+   declines the whole move rather than starting one it cannot
+   finish.
+
+   This is the lesson of the demo: the capability to cross is
+   real, but it is the AUTOMATIC selection that buys it. Pin the
+   configuration and you give it up. */
+
+MovePose(190, -60, 308.9, 0, 90, 0)
+Delay(1)
+
+SetConf(1, 1, 1)        // also switches automatic selection off
+
+// Expect a refusal and an error here. Nothing should move.
+MoveLin(190, 60, 308.9, 0, 90, 0)
+
+/* Reset the error before continuing: press the run button (now
+   red), then resume. Or send ResetError() and ResumeMotion()
+   from the editor. */
+Delay(1)
+
+
+/* ============================================================
+   DEMO 4 — stationary reorientation at the singularity
+   ============================================================
+   A third behaviour, and the strangest to watch.
+
+   There is a second singular joint set with the same TCP pose as
+   all-zeros:
+
+       theta1 = theta2 = theta3 = theta5 = 0
+       theta4 = 90, theta6 = -90
+
+   Same tool position, same tool orientation, different joint
+   set. That is what a singularity is: solutions collapsing.
+
+   Starting from a posture on that branch and demanding
+   cw = -1, the robot WILL execute a MoveLin through it — but on
+   arriving at the singular point, joint 4 rotates -180 degrees
+   and joint 6 rotates +180 degrees SIMULTANEOUSLY, while the
+   tool stays completely still. Then it carries on along its
+   line.
+
+   Watch the arm, not the tip. The tip pauses; the wrist spins.
+   Nothing is wrong — the robot is reconfiguring in place because
+   that is the only way to honour the configuration you demanded
+   and still finish the line. */
+
+SetAutoConf(1)
+
+// Land exactly on that second singular joint set.
+MoveJoints(0, 0, 0, 90, 0, -90)
+Delay(1.5)
+
+// Out to the start of the line, on this branch.
+MovePose(190, -60, 308.9, 0, 90, 0)
+Delay(1)
+
+// Through it. Expect the stationary 180-degree wrist swap.
+MoveLin(190, 60, 308.9, 0, 90, 0)
+Delay(1.5)
+
+SetAutoConf(1)
+
+
+/* ============================================================
+   DEMO 5 — the elbow singularity
+   ============================================================
+   Purely a theta3 condition, so it is the easiest of the three
+   to hit deliberately and the easiest to recognise: the arm is
+   straight.
+
+   theta5 is set to 45 here so the posture is elbow-singular
+   WITHOUT also being wrist-singular. At theta5 = 0 you would be
+   sitting on two singularities at once, which muddles the
+   lesson. */
+
+MoveJoints(0, 0, -72.43, 0, 45, 0)
+Delay(2)
+
+/* From here, try to move the tool further away from the base
+   along a straight line and it cannot — the arm is already
+   fully stretched. This is the singularity you meet by asking
+   for poses that are simply too far out.
+
+   Note that you CAN end a MoveLin here, which is what matters in
+   practice: reaching a far pose is fine, it is trying to
+   continue past it that is not. */
+
+MoveJoints(0, 0, 0, 0, 0, 0)
+Delay(1)
+
+
+/* ============================================================
+   DEMO 6 — the shoulder singularity
+   ============================================================
+   The awkward one. It happens when the WRIST CENTRE sits on the
+   axis of joint 1 — directly above the base.
+
+   The difficulty is that the wrist centre is not a place you
+   normally have coordinates for. The manual gives a neat trick:
+   move the TCP to the wrist centre, and then the singularity is
+   simply "x = 0 and y = 0".
+
+   The wrist centre is 70 mm back along the flange axis, hence
+   the negative Z. */
+
+SetTrf(0, 0, -70, 0, 0, 0)      // TCP now AT the wrist centre
+SetWrf(0, 0, 0, 0, 0, 0)        // measure from the robot base
+
+/* With those two frames set, any pose with x = 0 and y = 0 is a
+   shoulder singularity. Approach one, then cross it.
+
+   Remember: shoulder singularities can ONLY be crossed with
+   automatic posture selection on. The robot will never stop at
+   one to reorient joints 1, 4 and 6 in place the way it did at
+   the wrist in demo 4 — so there is no SetConf equivalent of
+   that behaviour here. Crossing also necessarily flips cs. */
+
+SetAutoConf(1)
+
+MovePose(0, -60, 300, 0, 90, 0)
+Delay(1)
+
+// Straight across the axis of joint 1. Watch joint 1: it has to
+// swing through a half turn as the wrist centre crosses over.
+MoveLin(0, 60, 300, 0, 90, 0)
+Delay(1.5)
+
+
+/* ============================================================
+   DEMO 7 — why "nearly" is worse than "exactly"
+   ============================================================
+   The most practically important demo in this file.
+
+   Repeat demo 6's crossing, but 0.5 mm off the axis instead of
+   on it. Exactly on the singularity, the crossing is clean.
+   Just beside it, the joints have to race around to keep the tip
+   on a straight line, and the tip slows right down to let them.
+
+   Same command, same speed setting, same 120 mm of travel —
+   dramatically worse motion. This is what "avoid singularities
+   in production" actually means, and it is why a path that nearly
+   touches one is a cycle-time problem, not just an aesthetic
+   one. */
+
+MovePose(0.5, -60, 300, 0, 90, 0)
+Delay(1)
+
+MoveLin(0.5, 60, 300, 0, 90, 0)
+Delay(1.5)
+
+
+/* --- Put everything back ------------------------------------- */
+
+SetTrf(0, 0, 0, 0, 0, 0)
+SetWrf(0, 0, 0, 0, 0, 0)
+SetAutoConf(1)
+SetAutoConfTurn(1)
+SetJointVelLimit(100)
+SetBlending(100)
+
+MoveJoints(0, 0, 0, 0, 0, 0)
+
+
+/* ---------------------------------------------------------------
+   ® A NOTE ON THE COORDINATES IN THIS FILE
+
+   The singular JOINT SETS here come straight from the manual and
+   are exact: all-zeros and {0,0,0,90,0,-90} for the wrist,
+   theta3 = -72.43 for the elbow, and the TCP-at-wrist-centre
+   trick for the shoulder.
+
+   The Cartesian start and end poses of the MoveLin demos are
+   constructed — lines through the singular point, built to match
+   the behaviour the manual describes rather than copied from it.
+   They should behave as annotated, but the exact acceptance or
+   refusal of a given line depends on your TRF and on where the
+   robot starts. If a demo behaves differently from its comment,
+   trust the robot and tell us: open an issue.
+
+   THINGS TO TRY
+
+   1. Demo 2 then demo 3, back to back. Identical MoveLin, one
+      succeeds and one is refused, and the only difference is
+      SetAutoConf(1) versus SetConf(1,1,1). This is the clearest
+      way to show what automatic posture selection is actually
+      for.
+
+   2. Demo 4 is the one people remember. The tool tip stops dead
+      while the wrist spins through half a turn. Cover the base
+      and ask someone to explain what they just saw.
+
+   3. Demo 6 then demo 7. Change the 0.5 to 5, then to 0.05, and
+      watch the motion get worse as you get closer without
+      touching. The penalty is not linear and it is not small.
+
+   4. Set SetJointVelLimit(100) at the top and re-run demo 7 — at
+      your own risk, with the robot clear. The joint speeds that
+      a near-singular path demands are the whole safety argument
+      for this file, and they are startling.
+
+   5. Put the robot at all-zeros and run SetAutoConf(0). The
+      controller has to pick a configuration and cannot, because
+      the posture is singular — so it chooses a boundary one,
+      {1,1,1}. A small thing, but it shows that "the current
+      configuration" is not always a well-defined idea.
+
+   NEXT   Nothing — this is the last file. Back to the README,
+          and to DISCLAIMER.md for the list of places this repo
+          simplifies, including this topic.
+   --------------------------------------------------------------- */
