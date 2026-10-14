@@ -2,9 +2,11 @@
    02 — TRF: the Tool Reference Frame
    --------------------------------------------------------------
    ROBOT     Meca500 only (R3 or R4)
-   TEACHES   SetTrf — telling the robot where the tool tip is
+   TEACHES   SetTrf — telling the robot where the tool tip is,
+             and which way it points
    NEEDS     Robot activated + homed. Runs safely with no tool.
-   WATCH     A pure rotation, before and after defining a tool
+   WATCH     A rotation about the flange, then about the
+             fingertips
    TIME      ~30 s
    ============================================================== */
 
@@ -44,6 +46,36 @@
    to be confused with TCP/IP, which is unfortunate but
    universal.)
 
+   WHICH WAY THE AXES POINT
+
+   A TRF is a position AND an orientation, and the orientation
+   is worth choosing on purpose. The convention used from here
+   on — and the common one in industry:
+
+     z   out of the tool, the way it works: through the
+         fingertips, out of the nozzle
+     x   along the tool's main moving axis: the direction the
+         jaws travel on a gripper, the dispensing axis on a
+         dispenser
+     y   whatever completes the frame
+
+   The world gets the same treatment: the WRF's z points up, out
+   of the fixture (see 01_world_reference_frame).
+
+   The payoff is that a tool pointing down at the work always
+   reads the same way. Its z is the world's z turned upside down,
+   so the first Euler angle is 180:
+
+       MovePose(190, 0, 200, 180, 0, -90)
+                             ---       ---
+                  tool pointing down   which way the jaws face
+
+   "180, 0, something" is the signature of a taught point. (The
+   MecaPortal may read it back as -180. Same angle.) It is also
+   what keeps relative moves readable: +z along the tool is
+   always INTO the work, -z always away from it — see
+   03_relative_moves.
+
    WHERE THE NUMBERS COME FROM
 
    Three sources, in increasing order of effort:
@@ -52,8 +84,30 @@
      - a touch-off routine, jogging the tip to a known point in
        several orientations
 
-   For Mecademic's own MEGP 25E gripper the offset is published,
-   so it is a single line and no calibration.
+   THE MEGP 25E, WORKED THROUGH
+
+   On its standard adapter plate the MEGP 25E does not stick
+   straight out of the flange. Its fingers point at right angles
+   to it, along the FRF's x axis — which faces down when every
+   joint is at zero. (That is why the zero position already looks
+   ready to pick something up.) Its jaws travel along FRF y.
+
+   So its TRF is moved AND turned:
+
+       SetTrf(37, 0, 14, 0, 90, 90)
+
+       37         along FRF x: 17 mm from the flange axis to the
+                  finger mounting screw, plus 20 mm of finger
+       14         along FRF z: flange face to that screw
+       0, 90, 90  turns the frame so z runs out through the
+                  fingertips and x along the jaws
+
+   The 17 and the 14 are from the drawing in the MEGP 25* user
+   manual. The 20 is a stand-in: Mecademic does not supply
+   fingers — they are designed for the part — so measure yours
+   and use it instead.
+
+   This line is the house tool for every example from here on.
 
    WHY IT PAYS OFF LATER
 
@@ -100,47 +154,60 @@ Delay(1)
 
 
 /* --- Before: no tool defined -----------------------------------
-   TRF sits on the flange. */
+   TRF sits on the flange, so poses describe the flange: here,
+   facing straight ahead, the way it does at zero. */
 SetTrf(0, 0, 0, 0, 0, 0)
 
-MovePose(190, 0, 280, 0, 90, 0)
+MovePose(190, 0, 200, 0, 90, 0)
 Delay(1)
 
-// Rotate the tool 40 degrees about its own axis, then back.
-// With no tool defined, the flange face is what pivots. Anything
-// mounted on it sweeps through an arc. Put a finger 100 mm below
-// the flange in your imagination and watch it travel.
-MovePose(190, 0, 280, 0, 90, 40)
+// Rotate 40 degrees about the TRF's z axis, then back. With no
+// tool defined, that axis is the flange's own, pointing straight
+// ahead — so the flange spins on the spot, and anything mounted
+// on it sweeps through an arc. With an MEGP 25E fitted, watch
+// the fingertips: 37 mm off that axis, they swing from side to
+// side.
+//
+// MoveLin, not MovePose: a MoveLin keeps the TCP on a straight
+// line — here, a line of zero length — so the pivot really does
+// hold still for the whole move, not just at the two ends.
+MoveLin(190, 0, 200, 0, 90, 40)
 Delay(0.5)
-MovePose(190, 0, 280, 0, 90, -40)
+MoveLin(190, 0, 200, 0, 90, -40)
 Delay(0.5)
-MovePose(190, 0, 280, 0, 90, 0)
+MoveLin(190, 0, 200, 0, 90, 0)
 
 Delay(1)
 
 
-/* --- After: a 100 mm tool defined ------------------------------
-   Declare a tool sticking 100 mm straight out along the flange's
-   Z axis — roughly a gripper with the part held between the
-   fingertips. No physical tool is required to see the effect. */
-SetTrf(0, 0, 100, 0, 0, 0)
+/* --- After: the gripper defined --------------------------------
+   The MEGP 25E's TRF, from the comments above. No physical tool
+   is required to see the effect. */
+SetTrf(37, 0, 14, 0, 90, 90)
 
-// Move the TIP to the same place the flange was before. The arm
-// visibly pulls back by 100 mm to put the tool tip there, which
-// on its own tells the story: the robot is now positioning the
-// tool, not itself.
-MovePose(190, 0, 280, 0, 90, 0)
+// Move the FINGERTIPS to the same place the flange was before,
+// pointing straight down. The arm visibly lifts and draws back
+// to put them there, which on its own tells the story: the robot
+// is now positioning the tool, not itself.
+MovePose(190, 0, 200, 180, 0, -90)
 Delay(1)
 
-// The same rotation as before, now about the tool tip. The tip
-// stays put and the ARM swings around it. This is the moment the
-// concept lands for most people — it is much more convincing
-// seen than described.
-MovePose(190, 0, 280, 0, 90, 40)
+// The same 40 degrees about the TRF's z axis — which is now the
+// tool's axis, pointing down through the fingertips. The
+// fingertips stay put and the ARM swings around them. This is
+// the moment the concept lands for most people; it is much more
+// convincing seen than described.
+//
+// Because these fingers sit at right angles to the flange,
+// turning them about their own axis is a big move for the arm:
+// joint 1 and the wrist both swing. That is the cost of this
+// mounting. (The MEGP 25E also comes with an optional 90 degree
+// adapter plate — see its user manual.)
+MoveLin(190, 0, 200, 180, 0, -50)
 Delay(0.5)
-MovePose(190, 0, 280, 0, 90, -40)
+MoveLin(190, 0, 200, 180, 0, -130)
 Delay(0.5)
-MovePose(190, 0, 280, 0, 90, 0)
+MoveLin(190, 0, 200, 180, 0, -90)
 
 
 // --- Put the tool back ----------------------------------------
@@ -154,15 +221,15 @@ MoveJoints(0, 0, 0, 0, 0, 0)
    1. Run the two halves back to back with no narration. "Watch
       what the tip does" is the only line you need.
 
-   2. Change SetTrf(0, 0, 100, ...) to SetTrf(0, 0, 150, ...) and
+   2. Change the 37 in SetTrf to 57 — fingers 20 mm longer — and
       run again. Longer tool, same code, still pivots about the
       tip. Then ask what changing a tool length costs them today.
 
-   3. If a real gripper is mounted, use its published offset and
-      touch the tip to a fixed point. Rotate in place and show
-      the tip staying on that point through the rotation. This is
-      the single most persuasive thing you can do with a Meca500
-      on a table.
+   3. If a real gripper is mounted, measure its fingers, put the
+      real length into SetTrf, and touch the tip to a fixed
+      point. Rotate in place and show the tip staying on that
+      point through the rotation. This is the single most
+      persuasive thing you can do with a Meca500 on a table.
 
    NEXT   03_relative_moves.mxprog — moving along the tool axis,
           which is what the TRF really buys you.

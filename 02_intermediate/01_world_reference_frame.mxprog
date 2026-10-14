@@ -3,7 +3,7 @@
    --------------------------------------------------------------
    ROBOT     Meca500 only (R3 or R4)
    TEACHES   SetWrf — moving the origin instead of the program
-   NEEDS     Robot activated + homed, no tool mounted
+   NEEDS     Robot activated + homed. Gripper optional.
    WATCH     The same four lines of code, run in two places
    TIME      ~30 s
    ============================================================== */
@@ -32,7 +32,7 @@
    the robot. Write the poses once, relative to the fixture, and
    commission a new cell by measuring one frame.
 
-   THE PAYOFF, IN THE WORDS A REAL APPLICATION USES
+   THE PAYOFF, IN THE WORDS A CUSTOMER USES
 
      "We moved the robot and nothing had to be reprogrammed."
      "We have six identical stations and one program."
@@ -51,9 +51,21 @@
    THE MENTAL MODEL
 
    SetWrf does not move the robot. It changes what the numbers
-   MEAN. The line MovePose(50, 0, 200, 0, 90, 0) sends the tool
-   to a different physical place before and after a SetWrf, and
-   that is exactly the point.
+   MEAN. The line MovePose(50, 0, 100, 180, 0, -90) sends the
+   tool to a different physical place before and after a SetWrf,
+   and that is exactly the point.
+
+   WHICH WAY IS UP
+
+   Put the WRF's z axis pointing up, out of the fixture — the
+   direction you would lift a part off it. Then "z = 40" means
+   40 mm above the fixture, +z is always away from the work, and
+   a tool pointing down at the fixture always has 180 as its
+   first Euler angle (02_tool_reference_frame explains why).
+
+   Both frames below follow that rule. They move the origin and
+   turn it about z, but they never tip it over: the fourth and
+   fifth numbers of each SetWrf stay at zero.
    --------------------------------------------------------------- */
 
 
@@ -89,24 +101,34 @@ MoveJoints(0, 0, 0, 0, 0, 0)
 Delay(1)
 
 
+/* --- The tool --------------------------------------------------
+   One line borrowed from the next file. It tells the robot where
+   the gripper's fingertips are, so every pose below describes
+   the fingertips, pointing straight down. Read each one as
+   "fingertips here, pointing down"; 02_tool_reference_frame
+   explains the numbers. */
+SetTrf(37, 0, 14, 0, 90, 90)
+
+
 /* --- Station A -------------------------------------------------
-   Put the world origin 150 mm out in X and 200 mm up, roughly
-   in front of the robot. Imagine a fixture bolted there.
+   Put the world origin 180 mm out in X, 60 mm to the right and
+   100 mm up, in front of the robot. Imagine a fixture bolted
+   there.
 
    In a real cell these six numbers come from measurement, or
    from jogging the robot to the fixture's corner and reading the
    pose off the MecaPortal. */
-SetWrf(150, -60, 200, 0, 0, 0)
+SetWrf(180, -60, 100, 0, 0, 0)
 
 // Everything below is written relative to that fixture. Note
 // that these are small, human-sized numbers: "40 mm above the
 // corner", "60 mm along the edge". Nobody has to think about
 // where the robot base is.
-MovePose(0, 0, 80, 0, 90, 0)      // above the fixture corner
-MoveLin(0, 0, 40, 0, 90, 0)       // descend to the part
+MovePose(0, 0, 80, 180, 0, -90)   // above the fixture corner
+MoveLin(0, 0, 40, 180, 0, -90)    // descend to the part
 Delay(0.5)
-MoveLin(60, 0, 40, 0, 90, 0)      // traverse along the edge
-MoveLin(60, 0, 80, 0, 90, 0)      // lift clear
+MoveLin(60, 0, 40, 180, 0, -90)   // traverse along the edge
+MoveLin(60, 0, 80, 180, 0, -90)   // lift clear
 
 Delay(1)
 
@@ -114,7 +136,7 @@ Delay(1)
 /* --- Station B -------------------------------------------------
    The second fixture is 120 mm across from the first and rotated
    by 30 degrees. One line describes that. */
-SetWrf(150, 60, 200, 0, 0, 30)
+SetWrf(180, 60, 100, 0, 0, 30)
 
 // Now the interesting part: the five motion lines below are
 // character-for-character identical to the five above. Copy and
@@ -124,18 +146,19 @@ SetWrf(150, 60, 200, 0, 0, 30)
 // This is the demo. Do not explain it first — run it, let them
 // see the robot work two different stations, and then scroll up
 // and show that the code is the same.
-MovePose(0, 0, 80, 0, 90, 0)
-MoveLin(0, 0, 40, 0, 90, 0)
+MovePose(0, 0, 80, 180, 0, -90)
+MoveLin(0, 0, 40, 180, 0, -90)
 Delay(0.5)
-MoveLin(60, 0, 40, 0, 90, 0)
-MoveLin(60, 0, 80, 0, 90, 0)
+MoveLin(60, 0, 40, 180, 0, -90)
+MoveLin(60, 0, 80, 180, 0, -90)
 
 
 // --- Put the world back ---------------------------------------
-// Reset the WRF to the base frame, so the next example starts
-// from a known state. Forgetting this is a classic way to
-// confuse yourself in a shared demo cell.
+// Reset the WRF to the base frame, and the TRF to the flange, so
+// the next example starts from a known state. Forgetting this is
+// a classic way to confuse yourself in a shared demo cell.
 SetWrf(0, 0, 0, 0, 0, 0)
+SetTrf(0, 0, 0, 0, 0, 0)
 
 MoveJoints(0, 0, 0, 0, 0, 0)
 
