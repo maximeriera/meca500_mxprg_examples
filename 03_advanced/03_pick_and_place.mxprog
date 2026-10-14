@@ -1,0 +1,482 @@
+/* ==============================================================
+   03 — Pick and place: the full demo
+   --------------------------------------------------------------
+   ROBOT     Meca500 only (R3 or R4)
+   TEACHES   Everything above, assembled into one cycle
+   NEEDS     Robot activated + homed. Gripper optional — see the
+             GRIPPER note below.
+   WATCH     A four-position tray cycle that looks like a product
+   TIME      ~60 s for the full cycle
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   WHAT THIS IS
+
+   The demo to run when someone says "show me what it does". It
+   picks four parts from a row and places them into a tray, and
+   it is built entirely from the pieces in basic/ and
+   intermediate/ — no new commands.
+
+   Read it as a worked example of how the pieces fit:
+
+     WRF          all coordinates are relative to the fixture,
+                  z up, so moving the fixture is a one-line
+                  change
+     TRF          poses refer to the fingertips, z pointing
+                  out through them — so every pose reads
+                  180, 0, -90: fingers straight down
+     SetConf      posture pinned, so every cycle is identical
+     MovePose     for travel, where the path does not matter
+     MoveLin      for the approach and retract, where it does
+     MoveLinRelTrf   approach distance stated once
+     Blending     on for travel, off at the work points
+     Checkpoints  so a host knows where the robot actually is
+
+   THE STRUCTURE
+
+   Notice what this file does NOT have: a loop. Four picks means
+   four blocks, written out. That is the honest consequence of a
+   robot with no flow control, and it is worth showing rather
+   than hiding — then explain that in production the host issues
+   StartProgram("demo/pick") four times with a different variable
+   each time, and the repetition disappears. See 01_variables and
+   02_program_calls.
+
+   WHAT THIS DEMO LEAVES OUT
+
+   This program assumes every grip works. It closes the gripper,
+   waits 0.8 s, and carries on to the tray — whether there is a
+   part in the fingers or not. The robot will not object: closing
+   on nothing is a perfectly successful GripperClose.
+
+   A real cell checks. Close, ask the gripper whether it is
+   holding a part, and only then carry on; if it is not, open,
+   back off, go home, report the error and stop. The robot has
+   no IF, so that check lives in the host — and the program has
+   to be split at the grip to give the host the chance to make
+   it.
+
+   The demo stays in one piece because it has to run from the
+   MecaPortal with nothing else connected. Its checkpoints 11,
+   21, 31, 41 sit exactly where a host would be listening; what
+   is missing is the other half of the conversation. IN A REAL
+   CELL, at the bottom of this file, puts it back. Run this one;
+   build that one.
+
+   GRIPPER
+
+   The gripper lines are commented out so this runs on a bare
+   robot. If a gripper is fitted, uncomment them — search for
+   GRIPPER. The Delay lines are already positioned correctly for
+   the gripper's parallel execution (see intermediate/07).
+
+   GEOMETRY
+
+   Parts come from a row of four, 25 mm apart, and go into a 2x2
+   tray 30 mm apart. Both are defined relative to the WRF, so if
+   you have a real fixture, measure it once and change the single
+   SetWrf line.
+   --------------------------------------------------------------- */
+
+
+/* ============ SETUP ========================================== */
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode — so this
+   program starts from firmware defaults no matter what ran
+   before it. Reactivating brings the motors back.
+
+   This does NOT move the arm: a robot that was already homed
+   needs no re-homing. (With an MEGP 25* gripper fitted, the
+   gripper re-homes on reactivation. The robot still does not
+   move — but keep the fingers clear.)
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision and calibration config all
+   survive. Run common/cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+Home()
+ResetError()
+ResumeMotion()
+
+
+/* Start from a known state. Everything this program does not
+   explicitly set — blending, payload, torque limits, move mode,
+   posture selection — comes from here rather than from whatever
+   ran before it.
+
+   Save common/init.mxprog on the robot as "lib/init" first, or
+   this reports [3017]. If you have not, comment the line out and
+   uncomment the fallback block below it. */
+StartProgram("lib/init")
+
+/* --- Overrides for THIS program ------------------------------
+   Everything below deliberately overrides what lib/init set.
+   That is the pattern: init establishes the house defaults, the
+   program states its own needs, and nothing is inherited by
+   accident. */
+
+// Speeds. Two of them: fast for travel, slow for process. Every
+// tuning conversation about this program happens in these lines.
+SetJointVel(30)
+SetCartLinVel(250)          // travel
+SetCartAngVel(180)
+
+// Pin the arm posture so every cycle is identical. lib/init
+// leaves automatic selection on, which is the safe general
+// default; a production cycle wants it pinned.
+//
+// Front, elbow up — and wrist -1. With an MEGP 25E pointing its
+// fingers down, the wrist bends down to do it, which is what
+// the robot calls "flip" (joint 5 negative). Ask for +1 here and
+// every pose below is refused.
+SetConf(1, 1, -1)
+
+// The tool: the house MEGP 25E from intermediate/02, with z out
+// through the fingertips and x along the jaws. The 37 assumes
+// 20 mm fingers — put in your real length.
+SetTrf(37, 0, 14, 0, 90, 90)
+
+// The fixture. Everything below is measured from here, so this
+// is the only line that changes when the fixture moves. Its z
+// points up, out of the fixture, like every WRF in this repo.
+SetWrf(240, 0, 60, 0, 0, 0)
+
+// GRIPPER: uncomment these two.
+// SetGripperVel(40)
+// SetGripperForce(40)
+
+/* --- Fallback, if lib/init is not saved on the robot ---------
+   Uncomment these if you commented out the StartProgram above. */
+// SetAutoConfTurn(1)
+// SetBlending(100)
+// SetMoveMode(0)
+// SetPayload(0, 0, 0, 0)
+// SetTorqueLimits(100, 100, 100, 100, 100, 100)
+
+
+/* ============ HOME ========================================== */
+
+MoveJoints(0, 0, 0, 0, 0, 0)
+MovePose(0, 0, 120, 180, 0, -90)       // safe height above fixture
+SetCheckpoint(1)                       // "ready, tray may be loaded"
+
+// GRIPPER: uncomment.
+// GripperOpen()
+// Delay(0.5)
+
+
+/* ============ PART 1 ======================================== */
+/* Pick from row position 1, place into tray cell 1.
+
+   Read this block carefully — the three below are identical
+   except for the two coordinate lines, and that repetition is
+   the point being made in the header. */
+
+// -- pick --
+MovePose(-38, -35, 60, 180, 0, -90)    // above the part, blended
+SetBlending(0)                         // arrive exactly at the part
+MoveLinRelTrf(0, 0, 20, 0, 0, 0)       // descend along tool axis
+Delay(0.3)
+// GRIPPER: uncomment.
+// GripperClose()
+// Delay(0.8)
+SetCheckpoint(11)                      // "grip step done" — NOT
+                                       // proof that a part is held
+// ^ In a real cell the program ENDS here. The host asks the
+//   gripper whether it is holding a part, then starts either the
+//   place program or the abort program. This demo cannot ask, so
+//   it carries on regardless. See IN A REAL CELL, below.
+MoveLinRelTrf(0, 0, -20, 0, 0, 0)      // retract along tool axis
+SetBlending(100)
+
+// -- place --
+MovePose(38, -15, 60, 180, 0, -90)     // above the tray cell
+SetBlending(0)
+MoveLinRelTrf(0, 0, 20, 0, 0, 0)
+Delay(0.3)
+// GRIPPER: uncomment.
+// GripperOpen()
+// Delay(0.8)
+SetCheckpoint(12)                      // "part 1 placed"
+MoveLinRelTrf(0, 0, -20, 0, 0, 0)
+SetBlending(100)
+
+
+/* ============ PART 2 ======================================== */
+
+MovePose(-38, -10, 60, 180, 0, -90)
+SetBlending(0)
+MoveLinRelTrf(0, 0, 20, 0, 0, 0)
+Delay(0.3)
+// GripperClose()
+// Delay(0.8)
+SetCheckpoint(21)
+MoveLinRelTrf(0, 0, -20, 0, 0, 0)
+SetBlending(100)
+
+MovePose(38, 15, 60, 180, 0, -90)
+SetBlending(0)
+MoveLinRelTrf(0, 0, 20, 0, 0, 0)
+Delay(0.3)
+// GripperOpen()
+// Delay(0.8)
+SetCheckpoint(22)
+MoveLinRelTrf(0, 0, -20, 0, 0, 0)
+SetBlending(100)
+
+
+/* ============ PART 3 ======================================== */
+
+MovePose(-38, 15, 60, 180, 0, -90)
+SetBlending(0)
+MoveLinRelTrf(0, 0, 20, 0, 0, 0)
+Delay(0.3)
+// GripperClose()
+// Delay(0.8)
+SetCheckpoint(31)
+MoveLinRelTrf(0, 0, -20, 0, 0, 0)
+SetBlending(100)
+
+MovePose(68, -15, 60, 180, 0, -90)
+SetBlending(0)
+MoveLinRelTrf(0, 0, 20, 0, 0, 0)
+Delay(0.3)
+// GripperOpen()
+// Delay(0.8)
+SetCheckpoint(32)
+MoveLinRelTrf(0, 0, -20, 0, 0, 0)
+SetBlending(100)
+
+
+/* ============ PART 4 ======================================== */
+
+MovePose(-38, 40, 60, 180, 0, -90)
+SetBlending(0)
+MoveLinRelTrf(0, 0, 20, 0, 0, 0)
+Delay(0.3)
+// GripperClose()
+// Delay(0.8)
+SetCheckpoint(41)
+MoveLinRelTrf(0, 0, -20, 0, 0, 0)
+SetBlending(100)
+
+MovePose(68, 15, 60, 180, 0, -90)
+SetBlending(0)
+MoveLinRelTrf(0, 0, 20, 0, 0, 0)
+Delay(0.3)
+// GripperOpen()
+// Delay(0.8)
+SetCheckpoint(42)
+MoveLinRelTrf(0, 0, -20, 0, 0, 0)
+SetBlending(100)
+
+
+/* ============ FINISH ======================================== */
+
+MovePose(0, 0, 120, 180, 0, -90)
+SetCheckpoint(99)                      // "cycle complete"
+
+// Put everything back to defaults so the next example starts
+// from a known state.
+SetWrf(0, 0, 0, 0, 0, 0)
+SetTrf(0, 0, 0, 0, 0, 0)
+SetAutoConf(1)
+SetCartLinVel(150)
+MoveJoints(0, 0, 0, 0, 0, 0)
+
+
+/* ---------------------------------------------------------------
+   IN A REAL CELL: THE GRIP HANDSHAKE
+
+   Everything above runs open loop. This is what a production
+   version of the same cycle does differently, and why.
+
+   THE HANDSHAKE
+
+       close the gripper
+       ask: is it holding a part?
+         yes   carry on to the tray
+         no    open, back off, go home, report the error, stop
+
+   The robot cannot run this — there is no IF. And it cannot be
+   bolted onto the program above either: by the time the fingers
+   close, the retract and the move to the tray are already
+   queued behind them. The decision has to be made BEFORE the
+   next motion is queued, not while it is running.
+
+   So the program is split at the grip. The pick program ends
+   with the arm down at the part and the fingers closing. With
+   nothing left in its queue, the arm simply stays there. That
+   pause is the host's window to decide.
+
+   THE ROBOT PROGRAMS
+
+   Three programs, saved on the robot (see 02_program_calls):
+
+     cell/pick_1
+         MovePose(-38, -35, 60, 180, 0, -90)
+         SetBlending(0)
+         MoveLinRelTrf(0, 0, 20, 0, 0, 0)
+         Delay(0.3)
+         GripperClose()
+         SetCheckpoint(11)            arm down, fingers closing
+
+     cell/place_1
+         the rest of the PART 1 block, from the retract on,
+         unchanged
+
+     cell/abort
+         GripperOpen()                let go of whatever is there
+         Delay(0.8)
+         MoveLinRelTrf(0, 0, -20, 0, 0, 0)
+         MovePose(0, 0, 120, 180, 0, -90)
+         MoveJoints(0, 0, 0, 0, 0, 0)
+         SetCheckpoint(90)            "aborted, arm clear"
+
+   All three rely on the SETUP section of this file having run
+   first — the frames above all. Settings are sticky, so a cell
+   runs its setup once, then calls these as often as it likes.
+
+   The Delay after GripperClose is gone. It was a guess at how
+   long the grip takes; the host now waits for the gripper to
+   say so.
+
+   One abort program serves all four pick points, because its
+   retract is relative — straight back along the tool, wherever
+   the tool happens to be. Note the order: open, retract, THEN go
+   home. The arm is down at the fixture, and a MovePose straight
+   home from there can swing through it. Opening first leaves a
+   half-gripped part where it is, rather than carrying something
+   nobody is sure of.
+
+   THE HOST SIDE
+
+       StartProgram("cell/pick_1")
+       wait for [3030][11]           arm down, close started
+       wait for the grip to finish   [2320] on the monitoring
+         (see below), with a           port, or poll
+         timeout                       GetRtGripperState()
+       decide:
+         held        StartProgram("cell/place_1"), carry on
+         missed      StartProgram("cell/abort")
+                     wait for [3030][90]
+                     raise the alarm, stop the cycle
+         timed out   a fault, not a miss: raise the alarm, and
+                     leave the arm where it is until someone
+                     has looked
+
+   Wait for the checkpoint FIRST. Before it arrives the close may
+   not have started, and the gripper state you read is left over
+   from the last open.
+
+   If [3040][11] arrives instead of [3030][11], the checkpoint was
+   discarded — the robot stopped in error or on a safety signal —
+   and the cycle is already over. That is the host's general
+   error handling, not this handshake.
+
+   What the operator does next — retry, skip that position, stop
+   the batch — is a host decision, made on the HMI. The robot
+   programs do not need to know.
+
+   READING THE GRIPPER
+
+       [2320][t, hp, dr, gc, go]
+
+       hp   holding part      1 while the fingers are forcing
+       dr   target reached    0 from the moment the close starts
+                              until the fingers reach the
+                              opening asked for
+       gc   gripper closed    1 once fully closed
+       go   gripper open      1 once fully open
+
+   The host waits until hp = 1 (stopped on something) or dr = 1
+   (got all the way to closed), then reads:
+
+       held      hp = 1 and gc = 0   gripping something, and the
+                                     fingers stopped short
+       missed    gc = 1              closed all the way, so
+                                     nothing is between them
+
+   If you have changed SetGripperRange, check that its closed
+   opening is smaller than the part, or a good grip reads as
+   closed.
+
+   For a stricter check, GetRtGripperPos returns the finger
+   opening in mm. Compare it with the part's width and you also
+   catch the wrong part, or a part gripped crooked. The manual
+   quotes errors of up to 0.5 mm even with good fingers, so set
+   the tolerance with that in mind.
+
+   THE OTHER HANDSHAKES
+
+   The grip is the one that matters most, but a real cell has a
+   few more of the same shape:
+
+     before the pick     is there a part? A sensor or a camera,
+                         read by the host.
+     before the place    still holding? Parts get lost in
+                         transit. Same gripper check, same split.
+     before the place    is the tray cell empty?
+     after the release   did it let go? hp back to 0.
+
+   WHAT IT COSTS
+
+   Every split is a stop and a round trip to the host. That is
+   cheap next to a dropped part, but it is not free, and on a
+   fast cycle it shows. Put decision points where a wrong answer
+   costs something. The grip always qualifies.
+   --------------------------------------------------------------- */
+
+
+/* ---------------------------------------------------------------
+   THINGS TO TRY
+
+   1. Start at SetJointVel(30) and SetCartLinVel(250). Run it
+      once at that speed so people can follow what is happening.
+
+   2. Run it again at SetJointVel(100) and SetCartLinVel(1000).
+      Same program, two edited numbers. This is the moment the
+      cycle time argument gets made, and it makes itself.
+
+   3. Have the log panel open. The checkpoint stream — 11, 12,
+      21, 22, ... 99 — is what a PLC integrator will actually be
+      looking at, and seeing it live is more useful to them than
+      watching the arm.
+
+   4. Change the single SetWrf line and run again. The whole
+      cycle relocates. If you have a fixture you can physically
+      move, this is the strongest thirty seconds in the demo.
+
+   5. With a gripper fitted, take one part away — or run with no
+      parts at all. The fingers close on nothing, the arm carries
+      nothing to the tray, and every checkpoint still arrives on
+      time. Show that, then walk through IN A REAL CELL. It is
+      the most convincing way to explain why the host exists.
+
+   QUESTIONS THIS WILL PROVOKE
+
+   "Why is every part written out four times?"
+      Because the robot has no loops. In production the host
+      calls one saved program four times with different
+      variables. Show advanced/01 and advanced/02.
+
+   "What if the part isn't there?"
+      The gripper tells you. An MEGP 25* reports whether it is
+      holding a part, so the grip needs no extra sensor. The
+      host reads that and decides: carry on, or abort, go home
+      and raise the alarm. See IN A REAL CELL. Whether a part is
+      waiting to be picked in the first place is a sensor or
+      camera question — also the host's.
+
+   "How accurate is the placement?"
+      Note that blending is off at every work point, so the
+      robot arrives exactly. Repeatability is a datasheet
+      number — quote the datasheet, not the demo.
+   --------------------------------------------------------------- */
